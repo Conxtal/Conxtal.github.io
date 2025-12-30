@@ -156,12 +156,45 @@ local Arthur = {
         -- Posture
         PostureDamage = 18,
 
+        -- Stamina
+        StaminaCost = 10,
+
         -- Hitbox
         HitboxSize = Vector3.new(4, 6, 4),
         HitboxOffset = Vector3.new(0, 2, -3),
 
         -- Restrictions
-        MaxComboToUse = 2,       -- can’t uptilt after hit 3/4
+        MaxComboToUse = 2,       -- can't uptilt after hit 3/4
+
+        -- Cooldown
+        Cooldown = 0.5,
+    },
+
+    --================================================
+    -- AERIAL (DOWN SLAM / PLUNGE ATTACK)
+    --================================================
+    Aerial = {
+
+        -- Timing
+        Recovery = 0.30,         -- recovery after landing
+
+        -- Slam behavior
+        Damage = 18,             -- base impact damage
+        SlamForce = 150,         -- downward force applied
+        Knockback = 80,          -- radial knockback from impact
+        Hitstun = 0.40,          -- stun duration on hit
+
+        -- Posture
+        PostureDamage = 25,
+
+        -- Stamina
+        StaminaCost = 15,
+
+        -- AOE
+        Radius = 8,              -- damage radius from impact point
+
+        -- Cooldown
+        Cooldown = 1.0,
     },
 
     --================================================
@@ -219,6 +252,7 @@ local Arthur = {
         M1_4 = "rbxassetid://12845456406",
 
         Uptilt = "rbxassetid://126734284253680",
+        Aerial = "rbxassetid://0",  -- TODO: Replace with actual aerial animation ID
 
         BlockIdle = "rbxassetid://12927194871",
         BlockHit = "rbxassetid://0",
@@ -251,6 +285,7 @@ local Arthur = {
         DashBack = 1.5,
 
         Uptilt = 1.20,
+        Aerial = 1.25,
 
         BlockIdle = 1.0,
 

@@ -24,7 +24,7 @@ end
 
 -- Create remote events
 local REMOTE_NAMES = {
-    "Attack", "Uptilt", "Block", "Dash", "Hit",
+    "Attack", "Uptilt", "Aerial", "Block", "Dash", "Hit",
     "State", "Ability", "Notification", "Passive",
     "CombatLock"
 }
@@ -56,19 +56,24 @@ if not getCharDataRemote then
 end
 
 -- Load handlers
-local HandlersFolder = script.Parent.Handlers
-local CharacterRegistry = require(HandlersFolder.CharacterRegistry)
-local AttackHandler = require(HandlersFolder.AttackHandler)
-local UptiltHandler = require(HandlersFolder.UptiltHandler)
-local BlockHandler = require(HandlersFolder.BlockHandler)
-local DashHandler = require(HandlersFolder.DashHandler)
-local PassiveHandler = require(HandlersFolder.PassiveHandler)
-local CombatLockHandler = require(HandlersFolder.AttackHandler.CombatLock)
+-- NOTE: Handlers are currently in shared/server folders, we'll need to reorganize them
+local CombatFolder = ReplicatedStorage:WaitForChild("Combat")
+local SharedHandlers = CombatFolder.Handlers or CombatFolder
+
+local CharacterRegistry = require(SharedHandlers.CharacterRegistry)
+local AttackHandler = require(SharedHandlers.AttackHandler)
+local UptiltHandler = require(script.UptiltHandler)  -- New handler in server folder
+local AerialHandler = require(script.AerialHandler)  -- New handler in server folder
+local BlockHandler = require(SharedHandlers.BlockHandler)
+local DashHandler = require(SharedHandlers.DashHandler)
+local PassiveHandler = require(SharedHandlers.PassiveHandler)
+local CombatLockHandler = require(SharedHandlers.CombatLock)
 
 -- Initialize handlers
 CharacterRegistry.Init(Remotes)
 AttackHandler.Init(Remotes, CharacterRegistry)
 UptiltHandler.Init(Remotes, CharacterRegistry)
+AerialHandler.Init(Remotes, CharacterRegistry)
 BlockHandler.Init(Remotes, CharacterRegistry)
 DashHandler.Init(Remotes, CharacterRegistry)
 PassiveHandler.Init(Remotes, CharacterRegistry)

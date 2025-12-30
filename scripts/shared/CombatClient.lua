@@ -25,6 +25,7 @@ function CombatClient.Init()
     Remotes = {
         Attack = folder:WaitForChild("Attack"),
         Uptilt = folder:WaitForChild("Uptilt"),
+        Aerial = folder:FindFirstChild("Aerial"),  -- May not exist yet
         Block = folder:WaitForChild("Block"),
         Dash = folder:WaitForChild("Dash"),
         Hit = folder:WaitForChild("Hit"),
@@ -85,6 +86,17 @@ function CombatClient.OnState(player, stateType, data, extra)
         end
 
         VFXHandler.OnUptilt(player, info)
+
+    elseif stateType == "Aerial" then
+        local info = data or {}
+
+        if isLocal then
+            AnimHandler.PlayAerial(char)
+        else
+            AnimHandler.PlayOn(char, "Aerial", { fadeIn = 0.02, priority = Enum.AnimationPriority.Action3 })
+        end
+
+        VFXHandler.OnAerial(player, info)
 
     elseif stateType == "Dash" then
         local info = data or {}

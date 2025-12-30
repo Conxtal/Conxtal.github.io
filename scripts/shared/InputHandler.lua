@@ -23,6 +23,7 @@ local Keybinds = {
     Block = Enum.KeyCode.F,
     Dash = Enum.KeyCode.Q,
     Uptilt = Enum.KeyCode.Space,
+    Aerial = Enum.KeyCode.C,  -- Down slam / plunge attack
     Ability1 = Enum.KeyCode.One,
     Ability2 = Enum.KeyCode.Two,
     Ability3 = Enum.KeyCode.Three,
@@ -64,6 +65,11 @@ function InputHandler.OnInputBegan(input, gameProcessed)
 
     elseif input.KeyCode == Keybinds.Uptilt then
         Remotes.Uptilt:FireServer()
+
+    elseif input.KeyCode == Keybinds.Aerial then
+        if Remotes.Aerial then
+            Remotes.Aerial:FireServer()
+        end
 
     elseif input.KeyCode == Keybinds.Ability1 then
         Remotes.Ability:FireServer(1)
