@@ -1230,6 +1230,21 @@ function CombatClient.OnState(player, stateType, data, extra)
         -- VFX
         VFXHandler.OnM1(player, combo, info)
 
+    elseif stateType == "AirM1" then
+        local combo = data
+        local info = extra or {}
+        VFXHandler.ScreenFlash(Color3.fromHSV(0.5, 0.3, 0.5), .1)
+
+        -- Play air M1 animation
+        if isLocal then
+            AnimHandler.PlayAirM1(char, combo)
+        else
+            AnimHandler.PlayOn(char, "AirM1_" .. combo, { fadeIn = 0.03, priority = Enum.AnimationPriority.Action3 })
+        end
+
+        -- VFX
+        VFXHandler.OnAirM1(player, combo, info)
+
     elseif stateType == "Uptilt" then
         local info = data or {}
 
@@ -1397,6 +1412,10 @@ local InputHandler = {}
 local Remotes = nil
 local LockOnModule = nil
 
+-- Hold detection
+local SpacebarPressStart = nil
+local HOLD_THRESHOLD = 0.25  -- Hold for this long = knockback instead of slam
+
 local Keybinds = {
     Attack = Enum.UserInputType.MouseButton1,
     Block = Enum.KeyCode.F,
@@ -1446,9 +1465,19 @@ function InputHandler.OnInputBegan(input, gameProcessed)
         Remotes.Uptilt:FireServer()
 
     elseif input.KeyCode == Keybinds.Aerial then
-        if Remotes.Aerial then
-            Remotes.Aerial:FireServer()
+        -- Check if spacebar was held
+        local isHolding = false
+        if SpacebarPressStart then
+            local holdTime = tick() - SpacebarPressStart
+            isHolding = holdTime &gt;= HOLD_THRESHOLD
         end
+
+        if Remotes.Aerial then
+            Remotes.Aerial:FireServer(isHolding)
+        end
+
+        -- Reset spacebar tracking
+        SpacebarPressStart = nil
 
     elseif input.KeyCode == Keybinds.Ability1 then
         Remotes.Ability:FireServer(1)
@@ -1462,12 +1491,22 @@ function InputHandler.OnInputBegan(input, gameProcessed)
     elseif input.KeyCode == Keybinds.Ability4 then
         Remotes.Ability:FireServer(4)
     end
+
+    -- Track spacebar press start time
+    if input.KeyCode == Enum.KeyCode.Space then
+        SpacebarPressStart = tick()
+    end
 end
 
 function InputHandler.OnInputEnded(input, gameProcessed)
     if input.KeyCode == Keybinds.Block then
         AnimationHandler.Stop("BlockIdle")
         Remotes.Block:FireServer(false)
+    end
+
+    -- Clear spacebar tracking when released
+    if input.KeyCode == Enum.KeyCode.Space then
+        SpacebarPressStart = nil
     end
 end
 
@@ -1860,6 +1899,13 @@ function AnimationHandler.PlayM1(character, combo)
 	return AnimationHandler.Play(character, "M1_" .. combo, {
 		priority = Enum.AnimationPriority.Action2,
 		fadeIn = 0.05,  -- Super fast combo transitions
+	})
+end
+
+function AnimationHandler.PlayAirM1(character, combo)
+	return AnimationHandler.Play(character, "AirM1_" .. combo, {
+		priority = Enum.AnimationPriority.Action3,
+		fadeIn = 0.03,  -- Even faster in air
 	})
 end
 
@@ -7274,11 +7320,17 @@ local Arthur = {
         -- Timing
         Recovery = 0.30,         -- recovery after landing
 
-        -- Slam behavior
+        -- Slam behavior (TAP spacebar)
         Damage = 18,             -- base impact damage
         SlamForce = 150,         -- downward force applied
         Knockback = 80,          -- radial knockback from impact
         Hitstun = 0.40,          -- stun duration on hit
+
+        -- Knockback behavior (HOLD spacebar)
+        KnockbackDamage = 15,    -- damage when using knockback version
+        KnockbackForce = 120,    -- horizontal knockback force
+        KnockbackLift = 10,      -- vertical launch force
+        KnockbackHitstun = 0.35,
 
         -- Posture
         PostureDamage = 25,
@@ -7291,6 +7343,64 @@ local Arthur = {
 
         -- Cooldown
         Cooldown = 1.0,
+    },
+
+    --================================================
+    -- AERIAL M1 (AIR COMBOS)
+    --================================================
+    AerialM1 = {
+
+        -- Combo rules
+        ComboWindow = 0.60,      -- time window for air combo
+        Hitstun = 0.30,          -- how long enemy is frozen
+
+        -- Hitbox
+        HitboxSize = Vector3.new(5, 5, 6),
+        HitboxOffset = Vector3.new(0, 0, -3),
+
+        -- Air combo hits (inherit from ground combo)
+        -- If uptilt at M1-1: get 3 air hits
+        -- If uptilt at M1-2: get 2 air hits
+        -- If uptilt at M1-3: get 1 air hit
+        -- Each hit counts toward total combo
+
+        Hits = {
+            -- AIR HIT 1
+            {
+                startup = 0.08,
+                active = 0.10,
+                recovery = 0.12,
+
+                damage = 9,
+                knockback = 50,      -- Keep them in air
+                lift = 2,            -- Slight upward push
+                postureDamage = 10,
+            },
+
+            -- AIR HIT 2
+            {
+                startup = 0.07,
+                active = 0.08,
+                recovery = 0.10,
+
+                damage = 10,
+                knockback = 55,
+                lift = 1,
+                postureDamage = 12,
+            },
+
+            -- AIR HIT 3 (Finisher)
+            {
+                startup = 0.08,
+                active = 0.10,
+                recovery = 0.14,
+
+                damage = 14,
+                knockback = 100,     -- Send them flying
+                lift = 5,            -- Big launch
+                postureDamage = 18,
+            },
+        },
     },
 
     --================================================
@@ -7342,13 +7452,21 @@ local Arthur = {
     -- ANIMATIONS (IDS ONLY)
     --================================================
     Animations = {
+        -- Ground M1
         M1_1 = "rbxassetid://12845340632",
         M1_2 = "rbxassetid://12845369253",
         M1_3 = "rbxassetid://12845398367",
         M1_4 = "rbxassetid://12845456406",
 
+        -- Air M1
+        AirM1_1 = "rbxassetid://0",  -- TODO: Add aerial M1 animations
+        AirM1_2 = "rbxassetid://0",
+        AirM1_3 = "rbxassetid://0",
+
+        -- Special attacks
         Uptilt = "rbxassetid://126734284253680",
-        Aerial = "rbxassetid://0",  -- TODO: Replace with actual aerial animation ID
+        Aerial = "rbxassetid://0",         -- Down slam
+        AerialKnockback = "rbxassetid://0", -- Hold version
 
         BlockIdle = "rbxassetid://12927194871",
         BlockHit = "rbxassetid://0",
@@ -17160,9 +17278,14 @@ return PassiveHandler</ProtectedString>
 					<Properties>
 						<Content name="LinkedSource"><null /></Content>
 						<ProtectedString name="Source">--[[
-	AttackHandler.lua
-	Handles M1 combo attacks with posture system + combat lock
-	Location: ServerScriptService/Combat/Handlers/AttackHandler
+	AttackHandler_V2.lua
+	REFACTORED: Cleaner, modular attack handling
+
+	Supports:
+	- Ground M1 combos
+	- Aerial M1 combos (after uptilt)
+	- Combo inheritance (uptilt at M1-3 = 1 air hit remaining)
+	- Proper state management
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -17173,318 +17296,390 @@ local Hitbox = require(CombatFolder.Modules.HitboxHandler)
 local State = require(CombatFolder.Modules.StateManager)
 local Cooldown = require(CombatFolder.Modules.CooldownManager)
 local Config = require(CombatFolder.Config)
+local AerialCombo = require(CombatFolder.Modules.AerialComboSystem)
 
-local AttackModule = {}
+local AttackHandler = {}
+
+-- ==============================
+-- STATE
+-- ==============================
 
 local Remotes = nil
 local CharacterManager = nil
 local PassiveHandler = nil
 local BlockHandler = nil
 local CombatLockHandler = nil
+
 local ActiveAttacks = {}
 local LastRequest = {}
 
-function AttackModule.Init(remotes, charManager)
-    Remotes = remotes
-    CharacterManager = charManager
-    PassiveHandler = require(script.Parent.PassiveHandler)
-    BlockHandler = require(script.Parent.BlockHandler)
-    CombatLockHandler = require(script.CombatLock)
+-- ==============================
+-- INIT
+-- ==============================
 
-    Remotes.Attack.OnServerEvent:Connect(function(player)
-        AttackModule.OnAttack(player)
-    end)
+function AttackHandler.Init(remotes, charManager)
+	Remotes = remotes
+	CharacterManager = charManager
+	PassiveHandler = require(script.Parent.PassiveHandler)
+	BlockHandler = require(script.Parent.BlockHandler)
+	CombatLockHandler = require(script.Parent.CombatLock)
 
-    Players.PlayerRemoving:Connect(function(player)
-        ActiveAttacks[player] = nil
-        LastRequest[player] = nil
-        CombatLockHandler.ForceUnlock(player)
-    end)
+	Remotes.Attack.OnServerEvent:Connect(function(player)
+		AttackHandler.OnAttack(player)
+	end)
 
-    print("[AttackHandler] Initialized")
-    return AttackModule
+	Players.PlayerRemoving:Connect(function(player)
+		ActiveAttacks[player] = nil
+		LastRequest[player] = nil
+		CombatLockHandler.ForceUnlock(player)
+		AerialCombo.Cleanup(player)
+	end)
+
+	print("[AttackHandler V2] Initialized")
+	return AttackHandler
 end
 
-function AttackModule.OnAttack(player)
-    -- Server-side request throttling
-    local now = tick()
-    local lastReq = LastRequest[player] or 0
-    if now - lastReq &lt; 0.05 then return end
-    LastRequest[player] = now
+-- ==============================
+-- MAIN ATTACK HANDLER
+-- ==============================
 
-    local data = State.Get(player)
-    if not data then return end
+function AttackHandler.OnAttack(player)
+	-- Throttle
+	local now = tick()
+	if now - (LastRequest[player] or 0) &lt; 0.05 then return end
+	LastRequest[player] = now
 
-    local char = player.Character
-    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    local hum = char and char:FindFirstChild("Humanoid")
-    if not hrp or not hum then return end
+	local data = State.Get(player)
+	if not data then return end
 
-    local charName = State.GetCharacter(player)
-    local charData = CharacterManager.Get(charName)
-    if not charData or not charData.M1 then return end
+	local char = player.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	local hum = char and char:FindFirstChild("Humanoid")
+	if not hrp or not hum then return end
 
-    local m1Data = charData.M1
+	-- Check if in air
+	local isAirborne = hum.FloorMaterial == Enum.Material.Air or AerialCombo.IsInAir(player)
 
-    -- State checks
-    if State.IsStunned(player) or State.IsBlocking(player) or State.IsDashing(player) or State.IsGuardBroken(player) then
-        return
-    end
-
-    -- Cooldown check
-    if not Cooldown.IsReady(player, Cooldown.Actions.M1) then
-        return
-    end
-
-    -- Combo logic
-    local combo = State.GetCombo(player)
-    local timeSinceAttack = State.TimeSinceAttack(player)
-
-    -- Reset combo if window expired
-    if timeSinceAttack &gt; m1Data.ComboWindow then
-        combo = 0
-        State.SetCombo(player, 0)
-    end
-
-    -- Check if already at max combo
-    if combo &gt;= m1Data.MaxCombo then
-        return
-    end
-
-    combo = combo + 1
-    State.SetCombo(player, combo)
-    State.SetLastAttack(player)
-
-    local hitData = m1Data.Hits[combo]
-    if not hitData then
-        State.ResetCombo(player)
-        return
-    end
-
-    -- Set cooldown for this attack
-    local totalAttackTime = hitData.startup + hitData.active + hitData.recovery
-    Cooldown.Set(player, Cooldown.Actions.M1, totalAttackTime)
-
-    State.SetState(player, State.States.ATTACKING)
-
-    -- Fire to clients
-    Remotes.State:FireAllClients(player, "M1", combo, {
-        character = charName,
-        isFinal = combo &gt;= m1Data.MaxCombo,
-    })
-
-    local attackId = tick()
-    ActiveAttacks[player] = attackId
-
-    -- Calculate damage with passive bonus
-    local damage = hitData.damage * (charData.Stats.Damage or 1)
-    local knockback = hitData.knockback * (charData.Stats.Knockback or 1)
-    local postureDamage = hitData.postureDamage or (damage * 0.5)
-
-    -- Apply passive damage bonus
-    if PassiveHandler then
-        local passiveBonus = PassiveHandler.GetDamageMultiplier(player)
-        damage = damage * passiveBonus
-    end
-
-    if data.awakened and charData.Awakening then
-        damage = damage * (charData.Awakening.DamageMultiplier or 1)
-    end
-
-    -- Startup
-    task.wait(hitData.startup)
-    if ActiveAttacks[player] ~= attackId then return end
-
-    -- Hitbox
-    local hitboxSize = m1Data.HitboxSize or Vector3.new(4, 4, 5)
-    local hitboxOffset = m1Data.HitboxOffset or Vector3.new(0, 0, -3)
-
-    if data.awakened and charData.Awakening and charData.Awakening.M1RangeMultiplier then
-        hitboxSize = hitboxSize * charData.Awakening.M1RangeMultiplier
-    end
-
-    local hasHit = {}
-    local activeStart = tick()
-
-    while tick() - activeStart &lt; hitData.active do
-        if ActiveAttacks[player] ~= attackId then return end
-
-        local origin = hrp.CFrame * CFrame.new(hitboxOffset)
-
-        Hitbox.Box(origin, hitboxSize, {char}, function(victimPlayer, victimChar, victimHum, victimHrp)
-            if hasHit[victimChar] then return end
-            hasHit[victimChar] = true
-
-            AttackModule.ApplyHit(player, victimPlayer, victimChar, victimHum, victimHrp, {
-                damage = damage,
-                knockback = knockback,
-                postureDamage = postureDamage,
-                lift = hitData.lift,
-                combo = combo,
-                isFinal = combo &gt;= m1Data.MaxCombo,
-                hitstun = m1Data.Hitstun,
-                charData = charData,
-            })
-        end)
-
-        task.wait()
-    end
-
-    if ActiveAttacks[player] ~= attackId then return end
-
-    -- Recovery
-    State.SetState(player, State.States.RECOVERY)
-    task.wait(hitData.recovery)
-
-    if ActiveAttacks[player] ~= attackId then return end
-
-    if State.IsRecovery(player) then
-        State.SetState(player, State.States.IDLE)
-    end
-
-    ActiveAttacks[player] = nil
-
-    -- Handle combo reset
-    if combo &gt;= m1Data.MaxCombo then
-        State.ResetCombo(player)
-        Cooldown.Set(player, Cooldown.Actions.M1, Config.Combat.ComboResetCooldown or 1.5)
-
-        -- Unlock combat after final hit
-        task.delay(0.5, function()
-            CombatLockHandler.ForceUnlock(player)
-        end)
-    else
-        task.delay(m1Data.ComboWindow, function()
-            if State.GetCombo(player) == combo then
-                State.ResetCombo(player)
-                Cooldown.Set(player, Cooldown.Actions.M1, Config.Combat.ComboResetCooldown or 1.5)
-            end
-        end)
-    end
+	if isAirborne then
+		AttackHandler.HandleAerialAttack(player, data, char, hrp, hum)
+	else
+		AttackHandler.HandleGroundAttack(player, data, char, hrp, hum)
+	end
 end
 
-function AttackModule.ApplyHit(attacker, victimPlayer, victimChar, victimHum, victimHrp, hitInfo)
-    local attackerChar = attacker.Character
-    local attackerHrp = attackerChar and attackerChar:FindFirstChild("HumanoidRootPart")
-    if not attackerHrp then return end
+-- ==============================
+-- GROUND M1 COMBOS
+-- ==============================
 
-    local damage = hitInfo.damage
-    local knockback = hitInfo.knockback
-    local postureDamage = hitInfo.postureDamage
-    local lift = hitInfo.lift or 0
-    local combo = hitInfo.combo
-    local isFinal = hitInfo.isFinal
-    local hitstun = hitInfo.hitstun
-    local charData = hitInfo.charData
+function AttackHandler.HandleGroundAttack(player, data, char, hrp, hum)
+	local charName = State.GetCharacter(player)
+	local charData = CharacterManager.Get(charName)
+	if not charData or not charData.M1 then return end
 
-    local hitType = isFinal and "Final" or "Light"
-    local blocked = nil
-    local actualDamage = damage
-    local actualKnockback = knockback
+	local m1Data = charData.M1
 
-    -- COMBAT LOCK: Only on non-final hits
-    -- Final hit = no follow, let them fly!
-    if not isFinal then
-        local lockDuration = hitstun + 0.2
+	-- State checks
+	if State.IsStunned(player) or State.IsBlocking(player) or
+	   State.IsDashing(player) or State.IsGuardBroken(player) then
+		return
+	end
 
-        if victimPlayer then
-            -- Player vs Player
-            local vd = State.Get(victimPlayer)
+	-- Cooldown check
+	if not Cooldown.IsReady(player, Cooldown.Actions.M1) then
+		return
+	end
 
-            if vd and State.HasIFrames(victimPlayer) then
-                return
-            end
+	-- Combo logic
+	local combo = State.GetCombo(player)
+	local timeSinceAttack = State.TimeSinceAttack(player)
 
-            State.UpdatePressure(victimPlayer)
-            CombatLockHandler.LockPlayers(attacker, victimPlayer, lockDuration)
+	-- Reset combo if window expired
+	if timeSinceAttack &gt; m1Data.ComboWindow then
+		combo = 0
+		State.SetCombo(player, 0)
+	end
 
-            if vd and State.IsBlockingActive(victimPlayer) then
-                blocked, actualDamage, actualKnockback = BlockHandler.ProcessBlockedHit(attacker, victimPlayer, hitInfo)
-            else
-                State.DamagePosture(victimPlayer, postureDamage)
-            end
-        else
-            -- Player vs NPC
-            CombatLockHandler.LockToNPC(attacker, victimChar, lockDuration)
-        end
-    else
-        -- FINAL HIT: No lock, but still do state checks
-        CombatLockHandler.ForceUnlock(attacker)
+	-- Check if already at max combo
+	if combo &gt;= m1Data.MaxCombo then
+		return
+	end
 
-        if victimPlayer then
-            local vd = State.Get(victimPlayer)
+	combo = combo + 1
+	State.SetCombo(player, combo)
+	State.SetLastAttack(player)
 
-            if vd and State.HasIFrames(victimPlayer) then
-                return
-            end
+	local hitData = m1Data.Hits[combo]
+	if not hitData then
+		State.ResetCombo(player)
+		return
+	end
 
-            State.UpdatePressure(victimPlayer)
-
-            if vd and State.IsBlockingActive(victimPlayer) then
-                blocked, actualDamage, actualKnockback = BlockHandler.ProcessBlockedHit(attacker, victimPlayer, hitInfo)
-            else
-                State.DamagePosture(victimPlayer, postureDamage)
-            end
-        end
-    end
-
-    -- Apply damage
-    if actualDamage &gt; 0 then
-        victimHum:TakeDamage(actualDamage)
-    end
-
-    -- Apply knockback
-    if actualKnockback &gt; 0 and not (blocked == "Deflect") then
-        local kbDir = attackerHrp.CFrame.LookVector
-        local kbVelocity = Vector3.new(kbDir.X, 0, kbDir.Z).Unit * actualKnockback
-
-        if lift &gt; 0 then
-            kbVelocity = kbVelocity + Vector3.new(0, lift, 0)
-        end
-
-        victimHrp.AssemblyLinearVelocity = kbVelocity
-    end
-
-    -- Apply hitstun (player only)
-    if not blocked and victimPlayer then
-        local vd = State.Get(victimPlayer)
-        if vd then
-            State.SetState(victimPlayer, State.States.STUNNED)
-
-            task.delay(hitstun, function()
-                if victimPlayer and State.IsStunned(victimPlayer) then
-                    State.SetState(victimPlayer, State.States.IDLE)
-                end
-            end)
-        end
-    end
-
-    -- Call PassiveHandler
-    if PassiveHandler and not blocked then
-        PassiveHandler.OnHit(attacker, victimPlayer, hitInfo)
-    end
-
-    -- Fire hit event to clients
-    Remotes.Hit:FireAllClients({
-        attacker = attacker,
-        victim = victimPlayer,
-        victimChar = victimChar,
-        position = victimHrp.Position,
-        damage = actualDamage,
-        knockback = actualKnockback,
-        combo = combo,
-        hitType = hitType,
-        blocked = blocked,
-        attackDir = attackerHrp.CFrame.LookVector,
-    })
+	-- Execute attack
+	AttackHandler.ExecuteAttack(player, charData, hitData, combo, false)
 end
 
-function AttackModule.CancelAttack(player)
-    ActiveAttacks[player] = nil
-    CombatLockHandler.ForceUnlock(player)
+-- ==============================
+-- AERIAL M1 COMBOS
+-- ==============================
+
+function AttackHandler.HandleAerialAttack(player, data, char, hrp, hum)
+	local charName = State.GetCharacter(player)
+	local charData = CharacterManager.Get(charName)
+	if not charData or not charData.AerialM1 then return end
+
+	local airData = charData.AerialM1
+
+	-- State checks
+	if State.IsStunned(player) or State.IsBlocking(player) or
+	   State.IsDashing(player) or State.IsGuardBroken(player) then
+		return
+	end
+
+	-- Check if can do air combo
+	if not AerialCombo.CanAirCombo(player) then
+		return
+	end
+
+	-- Increment air combo
+	if not AerialCombo.IncrementAirCombo(player) then
+		return
+	end
+
+	local airCombo = AerialCombo.GetAirCombo(player)
+	local hitData = airData.Hits[airCombo]
+	if not hitData then return end
+
+	-- Execute air attack
+	AttackHandler.ExecuteAttack(player, charData, hitData, airCombo, true)
 end
 
-return AttackModule</ProtectedString>
+-- ==============================
+-- UNIFIED ATTACK EXECUTION
+-- ==============================
+
+function AttackHandler.ExecuteAttack(player, charData, hitData, combo, isAerial)
+	local char = player.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if not hrp then return end
+
+	-- Set cooldown
+	local totalTime = hitData.startup + hitData.active + hitData.recovery
+	Cooldown.Set(player, Cooldown.Actions.M1, totalTime)
+
+	State.SetState(player, State.States.ATTACKING)
+
+	-- Fire to clients
+	local attackType = isAerial and "AirM1" or "M1"
+	Remotes.State:FireAllClients(player, attackType, combo, {
+		character = charData.Name,
+		isFinal = isAerial and (combo &gt;= AerialCombo.GetMaxAirHits(player)) or (combo &gt;= charData.M1.MaxCombo),
+	})
+
+	local attackId = tick()
+	ActiveAttacks[player] = attackId
+
+	-- Calculate damage
+	local damage = hitData.damage * (charData.Stats.Damage or 1)
+	local knockback = hitData.knockback * (charData.Stats.Knockback or 1)
+	local postureDamage = hitData.postureDamage or (damage * 0.5)
+
+	-- Passive bonus
+	if PassiveHandler then
+		damage = damage * PassiveHandler.GetDamageMultiplier(player)
+	end
+
+	-- Awakening bonus
+	local data = State.Get(player)
+	if data and data.awakened and charData.Awakening then
+		damage = damage * (charData.Awakening.DamageMultiplier or 1)
+	end
+
+	-- Startup
+	task.wait(hitData.startup)
+	if ActiveAttacks[player] ~= attackId then return end
+
+	-- Hitbox
+	local hitboxData = isAerial and charData.AerialM1 or charData.M1
+	local hitboxSize = hitboxData.HitboxSize or Vector3.new(4, 4, 5)
+	local hitboxOffset = hitboxData.HitboxOffset or Vector3.new(0, 0, -3)
+
+	local hasHit = {}
+	local activeStart = tick()
+
+	while tick() - activeStart &lt; hitData.active do
+		if ActiveAttacks[player] ~= attackId then return end
+
+		local origin = hrp.CFrame * CFrame.new(hitboxOffset)
+
+		Hitbox.Box(origin, hitboxSize, {char}, function(victimPlayer, victimChar, victimHum, victimHrp)
+			if hasHit[victimChar] then return end
+			hasHit[victimChar] = true
+
+			AttackHandler.ApplyHit(player, victimPlayer, victimChar, victimHum, victimHrp, {
+				damage = damage,
+				knockback = knockback,
+				postureDamage = postureDamage,
+				lift = hitData.lift or 0,
+				combo = combo,
+				isFinal = isAerial and (combo &gt;= AerialCombo.GetMaxAirHits(player)) or (combo &gt;= charData.M1.MaxCombo),
+				hitstun = isAerial and charData.AerialM1.Hitstun or charData.M1.Hitstun,
+				charData = charData,
+				isAerial = isAerial,
+			})
+		end)
+
+		task.wait()
+	end
+
+	if ActiveAttacks[player] ~= attackId then return end
+
+	-- Recovery
+	State.SetState(player, State.States.RECOVERY)
+	task.wait(hitData.recovery)
+
+	if ActiveAttacks[player] ~= attackId then return end
+
+	if State.IsRecovery(player) then
+		State.SetState(player, State.States.IDLE)
+	end
+
+	ActiveAttacks[player] = nil
+
+	-- Handle combo reset
+	if not isAerial then
+		if combo &gt;= charData.M1.MaxCombo then
+			State.ResetCombo(player)
+			Cooldown.Set(player, Cooldown.Actions.M1, Config.Combat.ComboResetCooldown or 1.5)
+
+			task.delay(0.5, function()
+				CombatLockHandler.ForceUnlock(player)
+			end)
+		else
+			task.delay(charData.M1.ComboWindow, function()
+				if State.GetCombo(player) == combo then
+					State.ResetCombo(player)
+					Cooldown.Set(player, Cooldown.Actions.M1, Config.Combat.ComboResetCooldown or 1.5)
+				end
+			end)
+		end
+	else
+		-- Air combo finished
+		if combo &gt;= AerialCombo.GetMaxAirHits(player) then
+			task.delay(0.5, function()
+				AerialCombo.EndAerialState(player)
+				State.ResetCombo(player)
+			end)
+		end
+	end
+end
+
+-- ==============================
+-- HIT APPLICATION
+-- ==============================
+
+function AttackHandler.ApplyHit(attacker, victimPlayer, victimChar, victimHum, victimHrp, hitInfo)
+	local attackerChar = attacker.Character
+	local attackerHrp = attackerChar and attackerChar:FindFirstChild("HumanoidRootPart")
+	if not attackerHrp then return end
+
+	local damage = hitInfo.damage
+	local knockback = hitInfo.knockback
+	local postureDamage = hitInfo.postureDamage
+	local lift = hitInfo.lift or 0
+	local isFinal = hitInfo.isFinal
+	local hitstun = hitInfo.hitstun
+	local isAerial = hitInfo.isAerial
+
+	local blocked = nil
+	local actualDamage = damage
+	local actualKnockback = knockback
+
+	-- Player vs Player
+	if victimPlayer then
+		local vd = State.Get(victimPlayer)
+
+		if vd and State.HasIFrames(victimPlayer) then
+			return
+		end
+
+		State.UpdatePressure(victimPlayer)
+
+		-- Combat lock (only if not final and not aerial)
+		if not isFinal and not isAerial then
+			local lockDuration = hitstun + 0.2
+			CombatLockHandler.LockPlayers(attacker, victimPlayer, lockDuration)
+		end
+
+		if vd and State.IsBlockingActive(victimPlayer) then
+			blocked, actualDamage, actualKnockback = BlockHandler.ProcessBlockedHit(attacker, victimPlayer, hitInfo)
+		else
+			State.DamagePosture(victimPlayer, postureDamage)
+		end
+	end
+
+	-- Apply damage
+	if actualDamage &gt; 0 then
+		victimHum:TakeDamage(actualDamage)
+	end
+
+	-- Apply knockback
+	if actualKnockback &gt; 0 and not (blocked == "Deflect") then
+		local kbDir = attackerHrp.CFrame.LookVector
+		local kbVelocity = Vector3.new(kbDir.X, 0, kbDir.Z).Unit * actualKnockback
+
+		if lift &gt; 0 then
+			kbVelocity = kbVelocity + Vector3.new(0, lift, 0)
+		end
+
+		victimHrp.AssemblyLinearVelocity = kbVelocity
+	end
+
+	-- Apply hitstun
+	if not blocked and victimPlayer then
+		local vd = State.Get(victimPlayer)
+		if vd then
+			local stunState = isAerial and State.States.AIRBORNE or State.States.STUNNED
+			State.SetState(victimPlayer, stunState)
+
+			task.delay(hitstun, function()
+				if victimPlayer and State.GetState(victimPlayer) == stunState then
+					State.SetState(victimPlayer, State.States.IDLE)
+				end
+			end)
+		end
+	end
+
+	-- Passive handler
+	if PassiveHandler and not blocked then
+		PassiveHandler.OnHit(attacker, victimPlayer, hitInfo)
+	end
+
+	-- Fire hit event
+	Remotes.Hit:FireAllClients({
+		attacker = attacker,
+		victim = victimPlayer,
+		victimChar = victimChar,
+		position = victimHrp.Position,
+		damage = actualDamage,
+		knockback = actualKnockback,
+		combo = hitInfo.combo,
+		hitType = isAerial and "Air" or (isFinal and "Final" or "Light"),
+		blocked = blocked,
+		attackDir = attackerHrp.CFrame.LookVector,
+	})
+end
+
+-- ==============================
+-- CLEANUP
+-- ==============================
+
+function AttackHandler.CancelAttack(player)
+	ActiveAttacks[player] = nil
+	CombatLockHandler.ForceUnlock(player)
+end
+
+return AttackHandler
+</ProtectedString>
 						<string name="ScriptGuid">{66CC74C8-92FE-4D4A-B35B-7341C5E43342}</string>
 						<BinaryString name="AttributesSerialize" />
 						<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
