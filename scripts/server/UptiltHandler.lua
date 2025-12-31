@@ -1,7 +1,12 @@
 --[[
-	UptiltHandler.lua
-	Handles Uptilt launcher attacks
-	Location: ServerScriptService/Combat/Handlers/UptiltHandler
+	UptiltHandler_V2.lua
+	REFACTORED: Cleaner uptilt handling with aerial state initialization
+
+	Features:
+	- Launches enemies airborne
+	- Starts aerial combo state
+	- Tracks ground combo for air hit inheritance
+	- Can only uptilt before combo 3
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -12,6 +17,7 @@ local Hitbox = require(CombatFolder.Modules.HitboxHandler)
 local State = require(CombatFolder.Modules.StateManager)
 local Cooldown = require(CombatFolder.Modules.CooldownManager)
 local Config = require(CombatFolder.Config)
+local AerialCombo = require(CombatFolder.Modules.AerialComboSystem)
 
 local UptiltHandler = {}
 
@@ -21,6 +27,10 @@ local PassiveHandler = nil
 local BlockHandler = nil
 local ActiveUptilts = {}
 local LastRequest = {}
+
+-- ==============================
+-- INIT
+-- ==============================
 
 function UptiltHandler.Init(remotes, charManager)
 	Remotes = remotes
@@ -35,17 +45,21 @@ function UptiltHandler.Init(remotes, charManager)
 	Players.PlayerRemoving:Connect(function(player)
 		ActiveUptilts[player] = nil
 		LastRequest[player] = nil
+		AerialCombo.Cleanup(player)
 	end)
 
-	print("[UptiltHandler] Initialized")
+	print("[UptiltHandler V2] Initialized")
 	return UptiltHandler
 end
 
+-- ==============================
+-- MAIN HANDLER
+-- ==============================
+
 function UptiltHandler.OnUptilt(player)
-	-- Server-side request throttling
+	-- Throttle
 	local now = tick()
-	local lastReq = LastRequest[player] or 0
-	if now - lastReq < 0.05 then return end
+	if now - (LastRequest[player] or 0) < 0.05 then return end
 	LastRequest[player] = now
 
 	local data = State.Get(player)
@@ -63,7 +77,8 @@ function UptiltHandler.OnUptilt(player)
 	local uptiltData = charData.Uptilt
 
 	-- State checks
-	if State.IsStunned(player) or State.IsBlocking(player) or State.IsDashing(player) or State.IsGuardBroken(player) then
+	if State.IsStunned(player) or State.IsBlocking(player) or
+	   State.IsDashing(player) or State.IsGuardBroken(player) then
 		return
 	end
 
@@ -72,13 +87,15 @@ function UptiltHandler.OnUptilt(player)
 		return
 	end
 
-	-- Check if combo is too high (can't uptilt after heavy hits)
-	local combo = State.GetCombo(player)
-	if uptiltData.MaxComboToUse and combo > uptiltData.MaxComboToUse then
+	-- IMPORTANT: Can only uptilt before combo 3
+	-- This means: M1-1, M1-2 = can uptilt
+	-- M1-3, M1-4 = cannot uptilt
+	local groundCombo = State.GetCombo(player)
+	if uptiltData.MaxComboToUse and groundCombo > uptiltData.MaxComboToUse then
 		return
 	end
 
-	-- Check stamina if needed
+	-- Stamina check
 	local staminaCost = uptiltData.StaminaCost or 0
 	if staminaCost > 0 and not State.HasStamina(player, staminaCost) then
 		return
@@ -89,19 +106,27 @@ function UptiltHandler.OnUptilt(player)
 		State.UseStamina(player, staminaCost)
 	end
 
-	-- Reset combo (uptilt starts new combo chain)
-	State.ResetCombo(player)
+	-- START AERIAL STATE (this is the key part!)
+	-- If they uptilt at M1-1: they get 3 air hits
+	-- If they uptilt at M1-2: they get 2 air hits
+	-- If they uptilt at M1-3: they get 1 air hit (but can't due to MaxComboToUse)
+	local maxAirHits = AerialCombo.StartAerialState(player, groundCombo)
+
+	print(string.format("[Uptilt] Player %s started aerial state. Ground combo: %d, Max air hits: %d",
+		player.Name, groundCombo, maxAirHits))
 
 	-- Set state
 	State.SetState(player, State.States.ATTACKING)
 
-	-- Calculate attack duration
+	-- Set cooldown
 	local totalDuration = uptiltData.Startup + uptiltData.Active + uptiltData.Recovery
 	Cooldown.Set(player, "Uptilt", totalDuration + (uptiltData.Cooldown or 0.5))
 
 	-- Fire to clients
 	Remotes.State:FireAllClients(player, "Uptilt", {
 		character = charName,
+		groundCombo = groundCombo,
+		airHitsRemaining = maxAirHits,
 	})
 
 	local attackId = tick()
@@ -113,12 +138,12 @@ function UptiltHandler.OnUptilt(player)
 	local forwardPush = uptiltData.ForwardPush or 0
 	local postureDamage = uptiltData.PostureDamage or (damage * 0.8)
 
-	-- Apply passive damage bonus
+	-- Passive bonus
 	if PassiveHandler then
-		local passiveBonus = PassiveHandler.GetDamageMultiplier(player)
-		damage = damage * passiveBonus
+		damage = damage * PassiveHandler.GetDamageMultiplier(player)
 	end
 
+	-- Awakening bonus
 	if data.awakened and charData.Awakening then
 		damage = damage * (charData.Awakening.DamageMultiplier or 1)
 		launchVelocity = launchVelocity * 1.15
@@ -162,7 +187,7 @@ function UptiltHandler.OnUptilt(player)
 	-- Recovery
 	State.SetState(player, State.States.RECOVERY)
 
-	local recoveryTime = hasHit[1] and uptiltData.RecoveryOnHit or uptiltData.Recovery
+	local recoveryTime = (next(hasHit) ~= nil) and uptiltData.RecoveryOnHit or uptiltData.Recovery
 	task.wait(recoveryTime)
 
 	if ActiveUptilts[player] ~= attackId then return end
@@ -174,6 +199,10 @@ function UptiltHandler.OnUptilt(player)
 	ActiveUptilts[player] = nil
 end
 
+-- ==============================
+-- HIT APPLICATION
+-- ==============================
+
 function UptiltHandler.ApplyHit(attacker, victimPlayer, victimChar, victimHum, victimHrp, hitInfo)
 	local attackerChar = attacker.Character
 	local attackerHrp = attackerChar and attackerChar:FindFirstChild("HumanoidRootPart")
@@ -184,12 +213,11 @@ function UptiltHandler.ApplyHit(attacker, victimPlayer, victimChar, victimHum, v
 	local forwardPush = hitInfo.forwardPush
 	local postureDamage = hitInfo.postureDamage
 	local hitstun = hitInfo.hitstun
-	local charData = hitInfo.charData
 
 	local blocked = nil
 	local actualDamage = damage
 
-	-- Check for player vs player
+	-- Player vs Player
 	if victimPlayer then
 		local vd = State.Get(victimPlayer)
 
@@ -201,7 +229,6 @@ function UptiltHandler.ApplyHit(attacker, victimPlayer, victimChar, victimHum, v
 
 		if vd and State.IsBlockingActive(victimPlayer) then
 			blocked, actualDamage = BlockHandler.ProcessBlockedHit(attacker, victimPlayer, hitInfo)
-			-- Reduce launch on block
 			if blocked then
 				launchVelocity = launchVelocity * 0.3
 				forwardPush = forwardPush * 0.3
@@ -216,7 +243,7 @@ function UptiltHandler.ApplyHit(attacker, victimPlayer, victimChar, victimHum, v
 		victimHum:TakeDamage(actualDamage)
 	end
 
-	-- Apply launch (upward + forward)
+	-- Apply launch
 	if launchVelocity > 0 and not (blocked == "Deflect") then
 		local launchDir = attackerHrp.CFrame.LookVector
 		local launchVel = Vector3.new(
@@ -227,7 +254,7 @@ function UptiltHandler.ApplyHit(attacker, victimPlayer, victimChar, victimHum, v
 		victimHrp.AssemblyLinearVelocity = launchVel
 	end
 
-	-- Apply hitstun + airborne state
+	-- Apply airborne state
 	if not blocked and victimPlayer then
 		local vd = State.Get(victimPlayer)
 		if vd then
@@ -241,12 +268,12 @@ function UptiltHandler.ApplyHit(attacker, victimPlayer, victimChar, victimHum, v
 		end
 	end
 
-	-- Call PassiveHandler
+	-- Passive handler
 	if PassiveHandler and not blocked then
 		PassiveHandler.OnHit(attacker, victimPlayer, hitInfo)
 	end
 
-	-- Fire hit event to clients
+	-- Fire hit event
 	Remotes.Hit:FireAllClients({
 		attacker = attacker,
 		victim = victimPlayer,
@@ -260,8 +287,13 @@ function UptiltHandler.ApplyHit(attacker, victimPlayer, victimChar, victimHum, v
 	})
 end
 
+-- ==============================
+-- CLEANUP
+-- ==============================
+
 function UptiltHandler.CancelUptilt(player)
 	ActiveUptilts[player] = nil
+	AerialCombo.EndAerialState(player)
 end
 
 return UptiltHandler
