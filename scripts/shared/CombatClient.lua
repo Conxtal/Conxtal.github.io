@@ -76,6 +76,21 @@ function CombatClient.OnState(player, stateType, data, extra)
         -- VFX
         VFXHandler.OnM1(player, combo, info)
 
+    elseif stateType == "AirM1" then
+        local combo = data
+        local info = extra or {}
+        VFXHandler.ScreenFlash(Color3.fromHSV(0.5, 0.3, 0.5), .1)
+
+        -- Play air M1 animation
+        if isLocal then
+            AnimHandler.PlayAirM1(char, combo)
+        else
+            AnimHandler.PlayOn(char, "AirM1_" .. combo, { fadeIn = 0.03, priority = Enum.AnimationPriority.Action3 })
+        end
+
+        -- VFX
+        VFXHandler.OnAirM1(player, combo, info)
+
     elseif stateType == "Uptilt" then
         local info = data or {}
 

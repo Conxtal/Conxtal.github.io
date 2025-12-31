@@ -344,6 +344,13 @@ function AnimationHandler.PlayM1(character, combo)
 	})
 end
 
+function AnimationHandler.PlayAirM1(character, combo)
+	return AnimationHandler.Play(character, "AirM1_" .. combo, {
+		priority = Enum.AnimationPriority.Action3,
+		fadeIn = 0.03,  -- Even faster in air
+	})
+end
+
 function AnimationHandler.PlayUptilt(character)
 	return AnimationHandler.Play(character, "Uptilt", {
 		priority = Enum.AnimationPriority.Action2,

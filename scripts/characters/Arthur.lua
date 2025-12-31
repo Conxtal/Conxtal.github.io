@@ -178,11 +178,17 @@ local Arthur = {
         -- Timing
         Recovery = 0.30,         -- recovery after landing
 
-        -- Slam behavior
+        -- Slam behavior (TAP spacebar)
         Damage = 18,             -- base impact damage
         SlamForce = 150,         -- downward force applied
         Knockback = 80,          -- radial knockback from impact
         Hitstun = 0.40,          -- stun duration on hit
+
+        -- Knockback behavior (HOLD spacebar)
+        KnockbackDamage = 15,    -- damage when using knockback version
+        KnockbackForce = 120,    -- horizontal knockback force
+        KnockbackLift = 10,      -- vertical launch force
+        KnockbackHitstun = 0.35,
 
         -- Posture
         PostureDamage = 25,
@@ -195,6 +201,64 @@ local Arthur = {
 
         -- Cooldown
         Cooldown = 1.0,
+    },
+
+    --================================================
+    -- AERIAL M1 (AIR COMBOS)
+    --================================================
+    AerialM1 = {
+
+        -- Combo rules
+        ComboWindow = 0.60,      -- time window for air combo
+        Hitstun = 0.30,          -- how long enemy is frozen
+
+        -- Hitbox
+        HitboxSize = Vector3.new(5, 5, 6),
+        HitboxOffset = Vector3.new(0, 0, -3),
+
+        -- Air combo hits (inherit from ground combo)
+        -- If uptilt at M1-1: get 3 air hits
+        -- If uptilt at M1-2: get 2 air hits
+        -- If uptilt at M1-3: get 1 air hit
+        -- Each hit counts toward total combo
+
+        Hits = {
+            -- AIR HIT 1
+            {
+                startup = 0.08,
+                active = 0.10,
+                recovery = 0.12,
+
+                damage = 9,
+                knockback = 50,      -- Keep them in air
+                lift = 2,            -- Slight upward push
+                postureDamage = 10,
+            },
+
+            -- AIR HIT 2
+            {
+                startup = 0.07,
+                active = 0.08,
+                recovery = 0.10,
+
+                damage = 10,
+                knockback = 55,
+                lift = 1,
+                postureDamage = 12,
+            },
+
+            -- AIR HIT 3 (Finisher)
+            {
+                startup = 0.08,
+                active = 0.10,
+                recovery = 0.14,
+
+                damage = 14,
+                knockback = 100,     -- Send them flying
+                lift = 5,            -- Big launch
+                postureDamage = 18,
+            },
+        },
     },
 
     --================================================
@@ -246,13 +310,21 @@ local Arthur = {
     -- ANIMATIONS (IDS ONLY)
     --================================================
     Animations = {
+        -- Ground M1
         M1_1 = "rbxassetid://12845340632",
         M1_2 = "rbxassetid://12845369253",
         M1_3 = "rbxassetid://12845398367",
         M1_4 = "rbxassetid://12845456406",
 
+        -- Air M1
+        AirM1_1 = "rbxassetid://0",  -- TODO: Add aerial M1 animations
+        AirM1_2 = "rbxassetid://0",
+        AirM1_3 = "rbxassetid://0",
+
+        -- Special attacks
         Uptilt = "rbxassetid://126734284253680",
-        Aerial = "rbxassetid://0",  -- TODO: Replace with actual aerial animation ID
+        Aerial = "rbxassetid://0",         -- Down slam
+        AerialKnockback = "rbxassetid://0", -- Hold version
 
         BlockIdle = "rbxassetid://12927194871",
         BlockHit = "rbxassetid://0",

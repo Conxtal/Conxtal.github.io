@@ -1,0 +1,477 @@
+--[[
+	AerialHandler_V2.lua
+	REFACTORED: Hold vs Tap mechanics for aerial attacks
+
+	HOLD SPACEBAR = Knockback (launches enemy mid-air)
+	TAP SPACEBAR = Down Slam (AOE ground pound)
+]]
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+
+local CombatFolder = ReplicatedStorage:WaitForChild("Combat")
+local Hitbox = require(CombatFolder.Modules.HitboxHandler)
+local State = require(CombatFolder.Modules.StateManager)
+local Cooldown = require(CombatFolder.Modules.CooldownManager)
+local Config = require(CombatFolder.Config)
+local AerialCombo = require(CombatFolder.Modules.AerialComboSystem)
+local InputBuffer = require(CombatFolder.Modules.InputBuffer)
+
+local AerialHandler = {}
+
+local Remotes = nil
+local CharacterManager = nil
+local PassiveHandler = nil
+local BlockHandler = nil
+local ActiveAerials = {}
+local LastRequest = {}
+
+-- ==============================
+-- INIT
+-- ==============================
+
+function AerialHandler.Init(remotes, charManager)
+	Remotes = remotes
+	CharacterManager = charManager
+	PassiveHandler = require(script.Parent.PassiveHandler)
+	BlockHandler = require(script.Parent.BlockHandler)
+
+	-- Create/get Aerial remote
+	if not Remotes.Aerial then
+		local remotesFolder = ReplicatedStorage:FindFirstChild("Remotes")
+		if remotesFolder then
+			local aerialRemote = remotesFolder:FindFirstChild("Aerial")
+			if not aerialRemote then
+				aerialRemote = Instance.new("RemoteEvent")
+				aerialRemote.Name = "Aerial"
+				aerialRemote.Parent = remotesFolder
+			end
+			Remotes.Aerial = aerialRemote
+		end
+	end
+
+	if Remotes.Aerial then
+		Remotes.Aerial.OnServerEvent:Connect(function(player, isHolding)
+			AerialHandler.OnAerial(player, isHolding)
+		end)
+	end
+
+	Players.PlayerRemoving:Connect(function(player)
+		ActiveAerials[player] = nil
+		LastRequest[player] = nil
+	end)
+
+	print("[AerialHandler V2] Initialized")
+	return AerialHandler
+end
+
+-- ==============================
+-- MAIN HANDLER
+-- ==============================
+
+function AerialHandler.OnAerial(player, isHolding)
+	-- Throttle
+	local now = tick()
+	if now - (LastRequest[player] or 0) < 0.05 then return end
+	LastRequest[player] = now
+
+	local data = State.Get(player)
+	if not data then return end
+
+	local char = player.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	local hum = char and char:FindFirstChild("Humanoid")
+	if not hrp or not hum then return end
+
+	local charName = State.GetCharacter(player)
+	local charData = CharacterManager.Get(charName)
+	if not charData or not charData.Aerial then return end
+
+	local aerialData = charData.Aerial
+
+	-- State checks
+	if State.IsStunned(player) or State.IsBlocking(player) or
+	   State.IsDashing(player) or State.IsGuardBroken(player) then
+		return
+	end
+
+	-- MUST be airborne
+	local isAirborne = hum.FloorMaterial == Enum.Material.Air or
+	                   State.GetState(player) == State.States.AIRBORNE or
+	                   AerialCombo.IsInAir(player)
+
+	if not isAirborne then
+		return
+	end
+
+	-- Cooldown check
+	if not Cooldown.IsReady(player, "Aerial") then
+		return
+	end
+
+	-- Stamina check
+	local staminaCost = aerialData.StaminaCost or 0
+	if staminaCost > 0 and not State.HasStamina(player, staminaCost) then
+		return
+	end
+
+	-- Use stamina
+	if staminaCost > 0 then
+		State.UseStamina(player, staminaCost)
+	end
+
+	-- Set state
+	State.SetState(player, State.States.ATTACKING)
+
+	-- Set cooldown
+	Cooldown.Set(player, "Aerial", aerialData.Cooldown or 1.0)
+
+	-- Determine attack type
+	local attackType = isHolding and "AerialKnockback" or "AerialSlam"
+
+	-- Fire to clients
+	Remotes.State:FireAllClients(player, "Aerial", {
+		character = charName,
+		isHolding = isHolding,
+		attackType = attackType,
+	})
+
+	local attackId = tick()
+	ActiveAerials[player] = attackId
+
+	if isHolding then
+		-- KNOCKBACK VERSION (mid-air launcher)
+		AerialHandler.ExecuteKnockback(player, charData, aerialData, attackId)
+	else
+		-- SLAM VERSION (ground pound)
+		AerialHandler.ExecuteSlam(player, charData, aerialData, attackId)
+	end
+end
+
+-- ==============================
+-- KNOCKBACK VERSION (Hold)
+-- ==============================
+
+function AerialHandler.ExecuteKnockback(player, charData, aerialData, attackId)
+	local char = player.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if not hrp then return end
+
+	-- Calculate damage
+	local damage = aerialData.KnockbackDamage * (charData.Stats.Damage or 1)
+	local knockbackForce = aerialData.KnockbackForce or 120
+	local lift = aerialData.KnockbackLift or 10
+	local postureDamage = (aerialData.PostureDamage or 25) * 0.7
+
+	-- Passive bonus
+	if PassiveHandler then
+		damage = damage * PassiveHandler.GetDamageMultiplier(player)
+	end
+
+	local data = State.Get(player)
+	if data and data.awakened and charData.Awakening then
+		damage = damage * (charData.Awakening.DamageMultiplier or 1)
+		knockbackForce = knockbackForce * 1.2
+		lift = lift * 1.2
+	end
+
+	-- Small startup
+	task.wait(0.05)
+	if ActiveAerials[player] ~= attackId then return end
+
+	-- Create hitbox in front
+	local hitboxSize = Vector3.new(5, 5, 6)
+	local hitboxOffset = Vector3.new(0, 0, -3)
+	local origin = hrp.CFrame * CFrame.new(hitboxOffset)
+
+	local hasHit = {}
+
+	Hitbox.Box(origin, hitboxSize, {char}, function(victimPlayer, victimChar, victimHum, victimHrp)
+		if hasHit[victimChar] then return end
+		hasHit[victimChar] = true
+
+		AerialHandler.ApplyKnockbackHit(player, victimPlayer, victimChar, victimHum, victimHrp, {
+			damage = damage,
+			knockbackForce = knockbackForce,
+			lift = lift,
+			postureDamage = postureDamage,
+			hitstun = aerialData.KnockbackHitstun or 0.35,
+			charData = charData,
+		})
+	end)
+
+	-- Recovery
+	State.SetState(player, State.States.RECOVERY)
+	task.wait(0.15)
+
+	if ActiveAerials[player] ~= attackId then return end
+
+	if State.IsRecovery(player) then
+		State.SetState(player, State.States.IDLE)
+	end
+
+	ActiveAerials[player] = nil
+end
+
+-- ==============================
+-- SLAM VERSION (Tap)
+-- ==============================
+
+function AerialHandler.ExecuteSlam(player, charData, aerialData, attackId)
+	local char = player.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	local hum = char and char:FindFirstChild("Humanoid")
+	if not hrp or not hum then return end
+
+	-- Calculate damage
+	local damage = aerialData.Damage * (charData.Stats.Damage or 1)
+	local slamForce = aerialData.SlamForce or 150
+	local radius = aerialData.Radius or 8
+	local postureDamage = aerialData.PostureDamage or (damage * 1.0)
+
+	-- Passive bonus
+	if PassiveHandler then
+		damage = damage * PassiveHandler.GetDamageMultiplier(player)
+	end
+
+	local data = State.Get(player)
+	if data and data.awakened and charData.Awakening then
+		damage = damage * (charData.Awakening.DamageMultiplier or 1)
+		radius = radius * 1.2
+	end
+
+	-- Apply downward force
+	hrp.AssemblyLinearVelocity = Vector3.new(0, -slamForce, 0)
+
+	-- Wait for ground impact
+	local maxWaitTime = 2.0
+	local startTime = tick()
+	local hasLanded = false
+
+	while not hasLanded and (tick() - startTime) < maxWaitTime do
+		if ActiveAerials[player] ~= attackId then return end
+
+		if hum.FloorMaterial ~= Enum.Material.Air then
+			hasLanded = true
+			break
+		end
+
+		task.wait()
+	end
+
+	if not hasLanded or ActiveAerials[player] ~= attackId then
+		State.SetState(player, State.States.IDLE)
+		ActiveAerials[player] = nil
+		return
+	end
+
+	-- Impact!
+	local impactPos = hrp.Position
+
+	-- AOE hitbox
+	local hasHit = {}
+	local hitboxOrigin = CFrame.new(impactPos)
+	local hitboxSize = Vector3.new(radius * 2, 6, radius * 2)
+
+	Hitbox.Box(hitboxOrigin, hitboxSize, {char}, function(victimPlayer, victimChar, victimHum, victimHrp)
+		if hasHit[victimChar] then return end
+		hasHit[victimChar] = true
+
+		-- Distance-based falloff
+		local distance = (victimHrp.Position - impactPos).Magnitude
+		local falloff = math.max(0.5, 1 - (distance / radius))
+
+		AerialHandler.ApplySlamHit(player, victimPlayer, victimChar, victimHum, victimHrp, {
+			damage = damage * falloff,
+			knockback = (aerialData.Knockback or 80) * falloff,
+			postureDamage = postureDamage * falloff,
+			impactPos = impactPos,
+			hitstun = aerialData.Hitstun or 0.4,
+			charData = charData,
+		})
+	end)
+
+	-- Recovery
+	State.SetState(player, State.States.RECOVERY)
+	task.wait(aerialData.Recovery or 0.3)
+
+	if ActiveAerials[player] ~= attackId then return end
+
+	if State.IsRecovery(player) then
+		State.SetState(player, State.States.IDLE)
+	end
+
+	ActiveAerials[player] = nil
+end
+
+-- ==============================
+-- HIT APPLICATION
+-- ==============================
+
+function AerialHandler.ApplyKnockbackHit(attacker, victimPlayer, victimChar, victimHum, victimHrp, hitInfo)
+	local attackerChar = attacker.Character
+	local attackerHrp = attackerChar and attackerChar:FindFirstChild("HumanoidRootPart")
+	if not attackerHrp then return end
+
+	local damage = hitInfo.damage
+	local knockbackForce = hitInfo.knockbackForce
+	local lift = hitInfo.lift
+	local postureDamage = hitInfo.postureDamage
+	local hitstun = hitInfo.hitstun
+
+	local blocked = nil
+	local actualDamage = damage
+	local actualKnockback = knockbackForce
+
+	-- Player checks
+	if victimPlayer then
+		local vd = State.Get(victimPlayer)
+
+		if vd and State.HasIFrames(victimPlayer) then return end
+
+		State.UpdatePressure(victimPlayer)
+
+		if vd and State.IsBlockingActive(victimPlayer) then
+			blocked, actualDamage, actualKnockback = BlockHandler.ProcessBlockedHit(attacker, victimPlayer, hitInfo)
+		else
+			State.DamagePosture(victimPlayer, postureDamage)
+		end
+	end
+
+	-- Apply damage
+	if actualDamage > 0 then
+		victimHum:TakeDamage(actualDamage)
+	end
+
+	-- Apply knockback (directional + upward)
+	if actualKnockback > 0 and not (blocked == "Deflect") then
+		local kbDir = attackerHrp.CFrame.LookVector
+		local kbVel = Vector3.new(
+			kbDir.X * actualKnockback,
+			lift,
+			kbDir.Z * actualKnockback
+		)
+		victimHrp.AssemblyLinearVelocity = kbVel
+	end
+
+	-- Apply hitstun (airborne state)
+	if not blocked and victimPlayer then
+		local vd = State.Get(victimPlayer)
+		if vd then
+			State.SetState(victimPlayer, State.States.AIRBORNE)
+
+			task.delay(hitstun, function()
+				if victimPlayer and State.GetState(victimPlayer) == State.States.AIRBORNE then
+					State.SetState(victimPlayer, State.States.IDLE)
+				end
+			end)
+		end
+	end
+
+	-- Passive
+	if PassiveHandler and not blocked then
+		PassiveHandler.OnHit(attacker, victimPlayer, hitInfo)
+	end
+
+	-- Fire event
+	Remotes.Hit:FireAllClients({
+		attacker = attacker,
+		victim = victimPlayer,
+		victimChar = victimChar,
+		position = victimHrp.Position,
+		damage = actualDamage,
+		knockback = actualKnockback,
+		hitType = "AerialKnockback",
+		blocked = blocked,
+		attackDir = attackerHrp.CFrame.LookVector,
+	})
+end
+
+function AerialHandler.ApplySlamHit(attacker, victimPlayer, victimChar, victimHum, victimHrp, hitInfo)
+	local attackerChar = attacker.Character
+	local attackerHrp = attackerChar and attackerChar:FindFirstChild("HumanoidRootPart")
+	if not attackerHrp then return end
+
+	local damage = hitInfo.damage
+	local knockback = hitInfo.knockback
+	local postureDamage = hitInfo.postureDamage
+	local impactPos = hitInfo.impactPos
+	local hitstun = hitInfo.hitstun
+
+	local blocked = nil
+	local actualDamage = damage
+	local actualKnockback = knockback
+
+	-- Player checks
+	if victimPlayer then
+		local vd = State.Get(victimPlayer)
+
+		if vd and State.HasIFrames(victimPlayer) then return end
+
+		State.UpdatePressure(victimPlayer)
+
+		if vd and State.IsBlockingActive(victimPlayer) then
+			blocked, actualDamage, actualKnockback = BlockHandler.ProcessBlockedHit(attacker, victimPlayer, hitInfo)
+		else
+			State.DamagePosture(victimPlayer, postureDamage)
+		end
+	end
+
+	-- Apply damage
+	if actualDamage > 0 then
+		victimHum:TakeDamage(actualDamage)
+	end
+
+	-- Apply radial knockback
+	if actualKnockback > 0 and not (blocked == "Deflect") then
+		local knockbackDir = (victimHrp.Position - impactPos).Unit
+		local kbVel = Vector3.new(
+			knockbackDir.X * actualKnockback,
+			actualKnockback * 0.5,
+			knockbackDir.Z * actualKnockback
+		)
+		victimHrp.AssemblyLinearVelocity = kbVel
+	end
+
+	-- Apply hitstun
+	if not blocked and victimPlayer then
+		local vd = State.Get(victimPlayer)
+		if vd then
+			State.SetState(victimPlayer, State.States.STUNNED)
+
+			task.delay(hitstun, function()
+				if victimPlayer and State.IsStunned(victimPlayer) then
+					State.SetState(victimPlayer, State.States.IDLE)
+				end
+			end)
+		end
+	end
+
+	-- Passive
+	if PassiveHandler and not blocked then
+		PassiveHandler.OnHit(attacker, victimPlayer, hitInfo)
+	end
+
+	-- Fire event
+	Remotes.Hit:FireAllClients({
+		attacker = attacker,
+		victim = victimPlayer,
+		victimChar = victimChar,
+		position = victimHrp.Position,
+		damage = actualDamage,
+		knockback = actualKnockback,
+		hitType = "AerialSlam",
+		blocked = blocked,
+		impactPos = impactPos,
+	})
+end
+
+-- ==============================
+-- CLEANUP
+-- ==============================
+
+function AerialHandler.CancelAerial(player)
+	ActiveAerials[player] = nil
+end
+
+return AerialHandler

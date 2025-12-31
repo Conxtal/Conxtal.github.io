@@ -18,6 +18,10 @@ local InputHandler = {}
 local Remotes = nil
 local LockOnModule = nil
 
+-- Hold detection
+local SpacebarPressStart = nil
+local HOLD_THRESHOLD = 0.25  -- Hold for this long = knockback instead of slam
+
 local Keybinds = {
     Attack = Enum.UserInputType.MouseButton1,
     Block = Enum.KeyCode.F,
@@ -67,9 +71,19 @@ function InputHandler.OnInputBegan(input, gameProcessed)
         Remotes.Uptilt:FireServer()
 
     elseif input.KeyCode == Keybinds.Aerial then
-        if Remotes.Aerial then
-            Remotes.Aerial:FireServer()
+        -- Check if spacebar was held
+        local isHolding = false
+        if SpacebarPressStart then
+            local holdTime = tick() - SpacebarPressStart
+            isHolding = holdTime >= HOLD_THRESHOLD
         end
+
+        if Remotes.Aerial then
+            Remotes.Aerial:FireServer(isHolding)
+        end
+
+        -- Reset spacebar tracking
+        SpacebarPressStart = nil
 
     elseif input.KeyCode == Keybinds.Ability1 then
         Remotes.Ability:FireServer(1)
@@ -83,12 +97,22 @@ function InputHandler.OnInputBegan(input, gameProcessed)
     elseif input.KeyCode == Keybinds.Ability4 then
         Remotes.Ability:FireServer(4)
     end
+
+    -- Track spacebar press start time
+    if input.KeyCode == Enum.KeyCode.Space then
+        SpacebarPressStart = tick()
+    end
 end
 
 function InputHandler.OnInputEnded(input, gameProcessed)
     if input.KeyCode == Keybinds.Block then
         AnimationHandler.Stop("BlockIdle")
         Remotes.Block:FireServer(false)
+    end
+
+    -- Clear spacebar tracking when released
+    if input.KeyCode == Enum.KeyCode.Space then
+        SpacebarPressStart = nil
     end
 end
 
