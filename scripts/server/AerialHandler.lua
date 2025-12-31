@@ -9,20 +9,15 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 
-local CombatFolder = ReplicatedStorage:WaitForChild("Combat")
-local Hitbox = require(CombatFolder.Modules.HitboxHandler)
-local State = require(CombatFolder.Modules.StateManager)
-local Cooldown = require(CombatFolder.Modules.CooldownManager)
-local Config = require(CombatFolder.Config)
-local AerialCombo = require(CombatFolder.Modules.AerialComboSystem)
-local InputBuffer = require(CombatFolder.Modules.InputBuffer)
+local Loader = require(ReplicatedStorage.Combat.ModuleLoader)
 
 local AerialHandler = {}
 
-local Remotes = nil
-local CharacterManager = nil
-local PassiveHandler = nil
-local BlockHandler = nil
+-- Dependencies
+local State, Cooldown, Hitbox, Config, AerialCombo, InputBuffer
+local PassiveHandler, BlockHandler
+local Remotes, CharacterManager
+
 local ActiveAerials = {}
 local LastRequest = {}
 
@@ -33,8 +28,14 @@ local LastRequest = {}
 function AerialHandler.Init(remotes, charManager)
 	Remotes = remotes
 	CharacterManager = charManager
-	PassiveHandler = require(script.Parent.PassiveHandler)
-	BlockHandler = require(script.Parent.BlockHandler)
+
+	-- Load core dependencies via ModuleLoader
+	State = Loader.GetCore("StateManager")
+	Cooldown = Loader.GetCore("CooldownManager")
+	Hitbox = Loader.GetCore("HitboxHandler")
+	Config = Loader.GetCore("Config")
+	AerialCombo = Loader.GetCore("AerialComboSystem")
+	InputBuffer = Loader.GetCore("InputBuffer")
 
 	-- Create/get Aerial remote
 	if not Remotes.Aerial then
@@ -50,6 +51,17 @@ function AerialHandler.Init(remotes, charManager)
 		end
 	end
 
+	print("[AerialHandler V2] Initialized")
+	return AerialHandler
+end
+
+function AerialHandler.SetDependencies(passive, block)
+	PassiveHandler = passive
+	BlockHandler = block
+end
+
+-- Setup event connections
+function AerialHandler.Connect()
 	if Remotes.Aerial then
 		Remotes.Aerial.OnServerEvent:Connect(function(player, isHolding)
 			AerialHandler.OnAerial(player, isHolding)
@@ -60,9 +72,6 @@ function AerialHandler.Init(remotes, charManager)
 		ActiveAerials[player] = nil
 		LastRequest[player] = nil
 	end)
-
-	print("[AerialHandler V2] Initialized")
-	return AerialHandler
 end
 
 -- ==============================

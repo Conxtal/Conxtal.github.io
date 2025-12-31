@@ -2,8 +2,11 @@
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
+local Loader = require(ReplicatedStorage.Combat.ModuleLoader)
+
 local DashHandler = {}
 
+-- Dependencies
 local Config, State, Cooldown
 local Remotes, CharacterManager, AttackHandler
 
@@ -21,13 +24,19 @@ function DashHandler.Init(remotes, charManager)
     Remotes = remotes
     CharacterManager = charManager
 
-    local CombatFolder = ReplicatedStorage:WaitForChild("Combat")
-    Config = require(CombatFolder.Config)
-    State = require(CombatFolder.Modules.StateManager)
-    Cooldown = require(CombatFolder.Modules.CooldownManager)
+    -- Load core dependencies via ModuleLoader
+    Config = Loader.GetCore("Config")
+    State = Loader.GetCore("StateManager")
+    Cooldown = Loader.GetCore("CooldownManager")
 
     AttackHandler = require(script.Parent.AttackHandler)
 
+    print("[DashHandler] Initialized (LOCKED)")
+    return DashHandler
+end
+
+-- Setup event connections
+function DashHandler.Connect()
     Remotes.Dash.OnServerEvent:Connect(function(player, direction)
         if typeof(direction) == "Vector3" and direction.Magnitude > 0 then
             direction = direction.Unit
@@ -41,9 +50,6 @@ function DashHandler.Init(remotes, charManager)
     game.Players.PlayerRemoving:Connect(function(player)
         CanDash[player] = nil
     end)
-
-    print("[DashHandler] Initialized (LOCKED)")
-    return DashHandler
 end
 
 --------------------------------------------------

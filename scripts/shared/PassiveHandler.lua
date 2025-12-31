@@ -6,18 +6,21 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 
-local CombatFolder = ReplicatedStorage:WaitForChild("Combat")
-local State = require(CombatFolder.Modules.StateManager)
+local Loader = require(ReplicatedStorage.Combat.ModuleLoader)
 
 local PassiveHandler = {}
 
-local Remotes = nil
-local CharacterManager = nil
+-- Dependencies
+local State
+local Remotes, CharacterManager
 local PassiveData = {}
 
 function PassiveHandler.Init(remotes, charManager)
     Remotes = remotes
     CharacterManager = charManager
+
+    -- Load core dependencies via ModuleLoader
+    State = Loader.GetCore("StateManager")
 
     print("[PassiveHandler] Initialized")
     return PassiveHandler

@@ -7,19 +7,28 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 
-local CombatFolder = ReplicatedStorage:WaitForChild("Combat")
-local State = require(CombatFolder.Modules.StateManager)
-local Config = require(CombatFolder.Config)
+local Loader = require(ReplicatedStorage.Combat.ModuleLoader)
 
 local BlockHandler = {}
 
-local Remotes = nil
-local CharacterManager = nil
+-- Dependencies
+local State, Config
+local Remotes, CharacterManager
 
 function BlockHandler.Init(remotes, charManager)
     Remotes = remotes
     CharacterManager = charManager
 
+    -- Load core dependencies via ModuleLoader
+    State = Loader.GetCore("StateManager")
+    Config = Loader.GetCore("Config")
+
+    print("[BlockHandler] Initialized")
+    return BlockHandler
+end
+
+-- Setup event connections
+function BlockHandler.Connect()
     Remotes.Block.OnServerEvent:Connect(function(player, isBlocking)
         if isBlocking then
             BlockHandler.StartBlock(player)
@@ -27,9 +36,6 @@ function BlockHandler.Init(remotes, charManager)
             BlockHandler.EndBlock(player)
         end
     end)
-
-    print("[BlockHandler] Initialized")
-    return BlockHandler
 end
 
 -- ========================================

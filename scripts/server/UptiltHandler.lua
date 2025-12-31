@@ -12,19 +12,16 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 
-local CombatFolder = ReplicatedStorage:WaitForChild("Combat")
-local Hitbox = require(CombatFolder.Modules.HitboxHandler)
-local State = require(CombatFolder.Modules.StateManager)
-local Cooldown = require(CombatFolder.Modules.CooldownManager)
-local Config = require(CombatFolder.Config)
-local AerialCombo = require(CombatFolder.Modules.AerialComboSystem)
+local Loader = require(ReplicatedStorage.Combat.ModuleLoader)
 
 local UptiltHandler = {}
 
-local Remotes = nil
-local CharacterManager = nil
-local PassiveHandler = nil
-local BlockHandler = nil
+-- Dependencies
+local State, Cooldown, Hitbox, Config, AerialCombo
+local PassiveHandler, BlockHandler
+local Remotes, CharacterManager
+local ComboManager
+
 local ActiveUptilts = {}
 local LastRequest = {}
 
@@ -35,9 +32,28 @@ local LastRequest = {}
 function UptiltHandler.Init(remotes, charManager)
 	Remotes = remotes
 	CharacterManager = charManager
-	PassiveHandler = require(script.Parent.PassiveHandler)
-	BlockHandler = require(script.Parent.BlockHandler)
 
+	-- Load core dependencies via ModuleLoader
+	State = Loader.GetCore("StateManager")
+	Cooldown = Loader.GetCore("CooldownManager")
+	Hitbox = Loader.GetCore("HitboxHandler")
+	Config = Loader.GetCore("Config")
+	AerialCombo = Loader.GetCore("AerialComboSystem")
+
+	-- Load ComboManager
+	ComboManager = require(script.Parent.handlers.ComboManager)
+
+	print("[UptiltHandler V2] Initialized")
+	return UptiltHandler
+end
+
+function UptiltHandler.SetDependencies(passive, block)
+	PassiveHandler = passive
+	BlockHandler = block
+end
+
+-- Setup event connections
+function UptiltHandler.Connect()
 	Remotes.Uptilt.OnServerEvent:Connect(function(player)
 		UptiltHandler.OnUptilt(player)
 	end)
@@ -47,9 +63,6 @@ function UptiltHandler.Init(remotes, charManager)
 		LastRequest[player] = nil
 		AerialCombo.Cleanup(player)
 	end)
-
-	print("[UptiltHandler V2] Initialized")
-	return UptiltHandler
 end
 
 -- ==============================
@@ -90,7 +103,7 @@ function UptiltHandler.OnUptilt(player)
 	-- IMPORTANT: Can only uptilt before combo 3
 	-- This means: M1-1, M1-2 = can uptilt
 	-- M1-3, M1-4 = cannot uptilt
-	local groundCombo = State.GetCombo(player)
+	local groundCombo = ComboManager.GetGroundCombo(player)
 	if uptiltData.MaxComboToUse and groundCombo > uptiltData.MaxComboToUse then
 		return
 	end
